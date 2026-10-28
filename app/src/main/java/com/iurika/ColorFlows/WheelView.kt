@@ -21,12 +21,18 @@ import kotlin.math.sin
  * The color wheel with the harmony's markers on it. RGB: a disc, hue around, saturation out from the white center.
  * RYB: a ring of the painter's 12 hues. Hue h sits at angle h counterclockwise from the right, red at 3 o'clock.
  * Dragging any marker turns the whole harmony; on the disc it also sets the saturation.
+ * Monochrome: the markers share the hue, each keeps its own saturation (its distance from the center) and value;
+ * the one touched last is [selected], the one the value slider changes.
  */
 class WheelView(c: Context) : View(c) {
     var wheel = Wheel.RGB; set(v) { field = v; invalidate() }
     var harmony = Harmony.COMPLEMENT; set(v) { field = v; invalidate() }
     var base = Hsv(140f, .75f, 1f); set(v) { field = v; invalidate() }
-    var onChange: (Hsv) -> Unit = {}
+    var mono = monoOf(base); set(v) { field = v; invalidate() }
+    var selected = 0; set(v) { field = v; invalidate() }
+    var onChange: () -> Unit = {}
+
+    fun points() = harmony.points(base, mono)
 
     private val d = resources.displayMetrics.density
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -52,7 +58,7 @@ class WheelView(c: Context) : View(c) {
         return cx + (track * frac * cos(a)).toFloat() to cy - (track * frac * sin(a)).toFloat()
     }
 
-    private fun frac(p: Hsv) = if (wheel == Wheel.RYB) 1f else p.s
+    private fun frac(p: Hsv) = if (wheel == Wheel.RYB && harmony != Harmony.MONO) 1f else p.s
 
     override fun onDraw(c: Canvas) {
         if (wheel == Wheel.RGB) {
@@ -63,7 +69,8 @@ class WheelView(c: Context) : View(c) {
             fill.shader = RadialGradient(cx, cy, r, Color.WHITE, 0x00ffffff, Shader.TileMode.CLAMP)
             c.drawCircle(cx, cy, r, fill)
             fill.shader = null
-            fill.color = Color.argb(((1 - base.v) * 255).toInt(), 0, 0, 0)
+            val v = points().getOrElse(selected) { base }.v
+            fill.color = Color.argb(((1 - v) * 255).toInt(), 0, 0, 0)
             c.drawCircle(cx, cy, r, fill)
         } else {
             val box = RectF(cx - r + ring / 2, cy - r + ring / 2, cx + r - ring / 2, cy + r - ring / 2)
@@ -76,16 +83,16 @@ class WheelView(c: Context) : View(c) {
             }
         }
         // the lines from the center to each color, then the markers, base last so it is on top
-        val pts = harmony.points(base)
+        val pts = points()
         line.strokeWidth = 1.5f * d
         line.color = 0x66ffffff
         for (p in pts) at(p.h, frac(p)).let { (x, y) -> c.drawLine(cx, cy, x, y, line) }
-        for (i in pts.indices.reversed()) {
+        for (i in pts.indices.sortedBy { it == selected }) {
             val p = pts[i]
-            val (x, y) = at(p.h, if (harmony == Harmony.MONO && wheel == Wheel.RGB) p.s else frac(p))
+            val (x, y) = at(p.h, frac(p))
             val col = wheel.color(p)
             val rad = 13 * d
-            if (i == 0) {
+            if (i == selected) {
                 // the one being moved: an open ring, the color shows through
                 line.strokeWidth = 3 * d; line.color = Color.WHITE
                 c.drawCircle(x, y, rad, line)
@@ -105,7 +112,7 @@ class WheelView(c: Context) : View(c) {
         val dx = e.x - cx; val dy = cy - e.y
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                val pts = harmony.points(base)
+                val pts = points()
                 // the nearest marker under the finger, else the base jumps where it touched
                 drag = pts.indices.minByOrNull { i -> at(pts[i].h, frac(pts[i])).let { (x, y) -> hypot(x - e.x, y - e.y) } }
                     ?.takeIf { i -> at(pts[i].h, frac(pts[i])).let { (x, y) -> hypot(x - e.x, y - e.y) } < 36 * d } ?: 0
@@ -120,11 +127,18 @@ class WheelView(c: Context) : View(c) {
 
     private fun move(dx: Float, dy: Float) {
         val a = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
-        val turn = harmony.turns.getOrElse(drag) { 0f }.takeIf { harmony != Harmony.MONO } ?: 0f
-        val h = ((a - turn) % 360 + 360) % 360
-        val s = if (wheel == Wheel.RGB && (drag == 0 || harmony != Harmony.MONO)) (hypot(dx, dy) / track).coerceIn(0f, 1f) else base.s
-        // the other markers keep their offset; only the base's own distance sets the saturation
-        base = Hsv(h, if (drag == 0 || wheel == Wheel.RYB) s else base.s, base.v)
-        onChange(base)
+        val far = (hypot(dx, dy) / track).coerceIn(0f, 1f)
+        if (harmony == Harmony.MONO) {
+            // one hue for all; the touched one alone moves in or out
+            val h = (a % 360 + 360) % 360
+            selected = drag
+            if (drag == 0) base = Hsv(h, far, base.v)
+            else { base = base.copy(h = h); mono = mono.toMutableList().also { it[drag - 1] = it[drag - 1].copy(s = far) } }
+        } else {
+            val h = ((a - harmony.turns.getOrElse(drag) { 0f }) % 360 + 360) % 360
+            // only the base's own distance sets the saturation, the others keep their turn from it
+            base = Hsv(h, if (drag == 0 && wheel == Wheel.RGB) far else base.s, base.v)
+        }
+        onChange()
     }
 }

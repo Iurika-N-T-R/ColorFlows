@@ -40,9 +40,11 @@ class MainActivity : Activity() {
     private var tab = 0 // 0 RVB, 1 RYB, 2 IMAGE, 3 SPHÈRE
     private var harmony = Harmony.COMPLEMENT
     private val bases = arrayOf(Hsv(140f, .75f, 1f), Hsv(20f, 1f, 1f)) // the RGB wheel's, the RYB wheel's
+    private val monos = arrayOf(monoOf(bases[0]), monoOf(bases[1])) // their monochrome's other two colors
     private val slots = arrayOf(ArrayList<Int>(), ArrayList<Int>()) // colors gathered in IMAGE, in SPHÈRE
     private var picked = -1 // the slot the next color replaces
-    private var sphere = 0xffd2643c.toInt()
+    private val tones = shading(0xffd2643c.toInt()).toMutableList() // the sphere's shadow, midtone, light
+    private var tone = 1 // the one its sliders change
     private var image: Bitmap? = null
     private var found = listOf<Int>() // the picture's main colors
     private var byName = false
@@ -83,16 +85,21 @@ class MainActivity : Activity() {
         val p = Store.prefs
         tab = p.getInt("tab", 0)
         harmony = Harmony.entries.getOrElse(p.getInt("harmony", 0)) { Harmony.COMPLEMENT }
-        for (i in 0..1) p.getString("base$i", null)?.split(',')?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == 3 }?.let { bases[i] = Hsv(it[0], it[1], it[2]) }
+        fun hsv(s: String?) = s?.split(',')?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == 3 }?.let { Hsv(it[0], it[1], it[2]) }
+        for (i in 0..1) {
+            hsv(p.getString("base$i", null))?.let { bases[i] = it }
+            monos[i] = p.getString("mono$i", null)?.split(';')?.mapNotNull(::hsv)?.takeIf { it.size == 2 } ?: monoOf(bases[i])
+        }
         for (i in 0..1) p.getString("slots$i", null)?.let { s -> runCatching { JSONArray(s) }.getOrNull()?.let { a -> slots[i].clear(); for (k in 0 until a.length()) slots[i] += a.getInt(k) } }
-        sphere = p.getInt("sphere", sphere)
+        p.getString("tones", null)?.split(',')?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 3 }?.forEachIndexed { i, c -> tones[i] = c }
         byName = p.getBoolean("byName", false)
         if (tab == 2) tab = 0 // the picture isn't kept
     }
 
     private fun save() = Store.prefs.edit().putInt("tab", tab).putInt("harmony", harmony.ordinal)
-        .apply { for (i in 0..1) { putString("base$i", bases[i].let { "${it.h},${it.s},${it.v}" }); putString("slots$i", JSONArray(slots[i]).toString()) } }
-        .putInt("sphere", sphere).putBoolean("byName", byName).apply()
+        .apply { for (i in 0..1) { putString("base$i", bases[i].let { "${it.h},${it.s},${it.v}" }); putString("slots$i", JSONArray(slots[i]).toString())
+            putString("mono$i", monos[i].joinToString(";") { "${it.h},${it.s},${it.v}" }) } }
+        .putString("tones", tones.joinToString(",")).putBoolean("byName", byName).apply()
 
     // ---- Navigation: a stack of screens, back pops ----
 
@@ -115,7 +122,7 @@ class MainActivity : Activity() {
 
     /** The colors on screen: the harmony's on the wheels, the gathered ones in IMAGE and SPHÈRE. */
     private fun colors(): List<Int> = when (tab) {
-        0, 1 -> harmony.points(bases[tab]).map { wheel.color(it) }
+        0, 1 -> harmony.points(bases[tab], monos[tab]).map { wheel.color(it) }
         2 -> slots[0]
         else -> slots[1]
     }
@@ -212,12 +219,34 @@ class MainActivity : Activity() {
     }
 
     private fun wheelTab(body: LinearLayout, changed: () -> Unit, updates: MutableList<() -> Unit>) {
-        val w = WheelView(this).apply { wheel = this@MainActivity.wheel; harmony = this@MainActivity.harmony; base = bases[tab] }
+        val w = WheelView(this).apply { wheel = this@MainActivity.wheel; harmony = this@MainActivity.harmony; base = bases[tab]; mono = monos[tab] }
         val icons = Harmony.entries.map { h -> HarmonyIcon(this, h).apply { on = h == this@MainActivity.harmony; contentDescription = h.label } }
         val name = tv(harmony.label, 13f, MU).apply { gravity = Gravity.CENTER }
+        val slider = GradientSlider(this)
+        val ryb = tab == 1
+        val isMono = { harmony == Harmony.MONO }
+        // the color the slider and the pipette work on: the base, or in monochrome the marker touched last
+        fun cur() = w.points().getOrElse(w.selected) { bases[tab] }
+        fun put(p: Hsv) {
+            if (w.selected == 0) bases[tab] = p else monos[tab] = monos[tab].toMutableList().also { it[w.selected - 1] = p }
+            w.base = bases[tab]; w.mono = monos[tab]
+        }
+        // RYB: left darkens toward black, right lightens toward white, the pure hue in the middle.
+        // Monochrome sets the saturation by the marker's place, so its slider is the value alone.
+        val shades = { ryb && !isMono() }
+        fun pos(b: Hsv) = if (!shades()) b.v else if (b.v < 1f) (b.v - .15f) / .85f * .5f else .5f + (1 - b.s) / .85f * .5f
+        fun from(x: Float, b: Hsv) = if (!shades()) b.copy(v = x) else if (x < .5f) b.copy(s = 1f, v = .15f + .85f * x / .5f) else b.copy(s = 1f - .85f * (x - .5f) / .5f, v = 1f)
+        fun track() {
+            val b = cur()
+            slider.colors = if (shades()) intArrayOf(Color.BLACK, wheel.color(Hsv(b.h, 1f, 1f)), Color.WHITE) else intArrayOf(Color.BLACK, wheel.color(b.copy(v = 1f)))
+            slider.value = pos(b)
+        }
+        updates += ::track
+        slider.onChange = { x -> put(from(x, cur())); changed() }
+        w.onChange = { bases[tab] = w.base; monos[tab] = w.mono; changed() }
         icons.forEach { ic ->
             ic.setOnClickListener {
-                harmony = ic.harmony; w.harmony = harmony; name.text = harmony.label
+                harmony = ic.harmony; w.harmony = harmony; w.selected = 0; name.text = harmony.label
                 icons.forEach { it.on = it === ic }; changed()
             }
         }
@@ -227,29 +256,21 @@ class MainActivity : Activity() {
         })
         body.addView(name.lp(-1, -2, t = 6))
 
-        val slider = GradientSlider(this)
-        val ryb = tab == 1
-        // RYB: left darkens toward black, right lightens toward white, the pure hue in the middle
-        fun pos(b: Hsv) = if (!ryb) b.v else if (b.v < 1f) (b.v - .15f) / .85f * .5f else .5f + (1 - b.s) / .85f * .5f
-        fun from(x: Float, b: Hsv) = if (!ryb) b.copy(v = x) else if (x < .5f) b.copy(s = 1f, v = .15f + .85f * x / .5f) else b.copy(s = 1f - .85f * (x - .5f) / .5f, v = 1f)
-        fun track() {
-            val b = bases[tab]
-            slider.colors = if (ryb) intArrayOf(Color.BLACK, wheel.color(Hsv(b.h, 1f, 1f)), Color.WHITE) else intArrayOf(Color.BLACK, wheel.color(b.copy(v = 1f)))
-            slider.value = pos(b)
-        }
-        updates += ::track
-        slider.onChange = { x -> bases[tab] = from(x, bases[tab]); w.base = bases[tab]; changed() }
-        w.onChange = { bases[tab] = it; changed() }
-
         body.addView(hbox(
-            iconButton(R.drawable.ic_swap, "Changer la couleur de base") {
+            iconButton(R.drawable.ic_swap, "Couleur suivante") {
+                val pts = w.points()
+                if (isMono()) { w.selected = (w.selected + 1) % pts.size; changed() }
                 // the next color of the harmony becomes the one moved by the finger
-                val pts = harmony.points(bases[tab])
-                if (pts.size > 1) { bases[tab] = pts[1].let { it.copy(h = ((it.h % 360) + 360) % 360) }; w.base = bases[tab]; changed() }
+                else if (pts.size > 1) { bases[tab] = pts[1].let { it.copy(h = ((it.h % 360) + 360) % 360) }; w.base = bases[tab]; changed() }
             },
             View(this).lp(0, 1, 1f),
             iconButton(R.drawable.ic_pipette, "Saisir une couleur") {
-                hexDialog(wheel.color(bases[tab])) { c -> bases[tab] = wheel.point(c); w.base = bases[tab]; changed() }
+                hexDialog(wheel.color(cur())) { c ->
+                    val p = wheel.point(c)
+                    // in monochrome a typed color sets the hue of all three
+                    if (isMono()) { bases[tab] = bases[tab].copy(h = p.h); w.base = bases[tab] }
+                    put(p); changed()
+                }
             },
         ).apply { setPadding(dp(12), dp(8), dp(12), 0) })
         body.addView(w.lp(-1, -2, l = 12, r = 12))
@@ -261,35 +282,39 @@ class MainActivity : Activity() {
         else body.addView(slider.lp(-1, -2, l = 20, t = 10, r = 20))
     }
 
-    /** IMAGE and SPHÈRE gather colors in slots; a filled slot tapped is the one the next color replaces. */
+    /**
+     * IMAGE and SPHÈRE gather colors in slots, as many as wanted: rows of 6, the next empty one dashed.
+     * A filled slot tapped is the one the next color replaces.
+     */
     private fun slotRow(list: ArrayList<Int>, changed: () -> Unit): LinearLayout {
-        val row = hbox().apply { gravity = Gravity.CENTER }
+        val box = vbox()
         fun fill() {
-            row.removeAllViews()
-            for (i in 0 until 6) {
-                val c = list.getOrNull(i)
-                row.addView(tv(c?.let(::hex)?.drop(1) ?: "", 9f, c?.let(::onColor) ?: MU, bold = true).apply {
-                    gravity = Gravity.CENTER
-                    background = if (c == null) GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setStroke(dp(1), MU, dp(4).toFloat(), dp(3).toFloat()) }
-                    else rounded(c, 12, if (i == picked) 3 else 0, TEXT)
-                    if (c != null) {
-                        setOnClickListener { picked = if (picked == i) -1 else i; fill() }
-                        setOnLongClickListener { info(c); true }
-                    }
-                }.lp(0, dp(if (i == picked) 52 else 46), 1f, l = 4, r = 4))
+            box.removeAllViews()
+            (0..list.size).chunked(6).forEach { idx ->
+                val row = hbox()
+                for (k in 0 until 6) {
+                    val i = idx.getOrNull(k)
+                    val c = i?.let { list.getOrNull(it) }
+                    row.addView(tv(c?.let(::hex)?.drop(1) ?: if (i != null) "+" else "", if (c == null) 16f else 9f, c?.let(::onColor) ?: MU, bold = true).apply {
+                        gravity = Gravity.CENTER
+                        if (i != null) background = if (c == null) GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setStroke(dp(1), MU, dp(4).toFloat(), dp(3).toFloat()) }
+                        else rounded(c, 12, if (i == picked) 3 else 0, TEXT)
+                        if (c != null) {
+                            setOnClickListener { picked = if (picked == i) -1 else i!!; fill() }
+                            setOnLongClickListener { info(c); true }
+                        }
+                    }.lp(0, dp(46), 1f, l = 4, t = 4, r = 4, b = 4))
+                }
+                box.addView(row)
             }
         }
-        row.tag = Runnable(::fill)
+        box.tag = Runnable(::fill)
         fill()
-        return row
+        return box
     }
 
     private fun gather(list: ArrayList<Int>, c: Int, row: LinearLayout, changed: () -> Unit) {
-        when {
-            picked in list.indices -> { list[picked] = c; picked = -1 }
-            list.size < 6 -> list += c
-            else -> list[list.lastIndex] = c
-        }
+        if (picked in list.indices) { list[picked] = c; picked = -1 } else list += c
         (row.tag as Runnable).run(); changed()
     }
 
@@ -372,49 +397,80 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * The painter's sphere: shadow, midtone and light are three colors of their own; the one tapped is
+     * changed with the sliders, and the ball is painted with all three. Touching the ball picks a shade,
+     * "Ajouter" keeps it.
+     */
     private fun sphereTab(body: LinearLayout, changed: () -> Unit, updates: MutableList<() -> Unit>) {
         val list = slots[1]
         val slotsRow = slotRow(list, changed)
-        val ball = SphereView(this).apply { color = sphere }
-        ball.onPick = { gather(list, it, slotsRow, changed) }
-        val trio = hbox().apply { gravity = Gravity.CENTER }
-        fun fillTrio() {
-            trio.removeAllViews()
-            shading(sphere).zip(listOf("Ombre", "Ton moyen", "Lumière")).forEach { (c, n) ->
-                trio.addView(vbox(
-                    View(this).apply { background = rounded(c, 14, 2, 0x33ffffff) }.lp(dp(28), dp(28)),
-                    tv(n, 12f, MU).lp(-2, -2, t = 4),
-                ).apply { gravity = Gravity.CENTER_HORIZONTAL; setOnClickListener { gather(list, c, slotsRow, changed) } }.lp(0, -2, 1f))
-            }
+        val ball = SphereView(this).apply { tones = this@MainActivity.tones.toList() }
+        // before / now: the last kept color, the one under the finger
+        val before = View(this)
+        val now = View(this)
+        fun bar() {
+            before.background = rounded(list.lastOrNull() ?: ball.picked, 0)
+            now.background = rounded(ball.picked, 0)
         }
-        fillTrio()
-        val h = Hsv.of(sphere)
-        val hue = GradientSlider(this).apply { colors = IntArray(7) { Color.HSVToColor(floatArrayOf(it * 60f, 1f, 1f)) }; value = h.h / 360 }
+        bar()
+        ball.onPick = { bar() }
+        val trio = hbox().apply { gravity = Gravity.CENTER }
+        val hue = GradientSlider(this).apply { colors = IntArray(7) { Color.HSVToColor(floatArrayOf(it * 60f, 1f, 1f)) } }
         val sat = GradientSlider(this)
         val vel = GradientSlider(this)
-        fun tracks() {
-            val k = Hsv.of(sphere)
-            sat.colors = intArrayOf(Hsv(k.h, 0f, k.v).color(), Hsv(k.h, 1f, k.v).color()); sat.value = k.s
-            vel.colors = intArrayOf(Color.BLACK, Hsv(k.h, k.s, 1f).color()); vel.value = k.v
-        }
-        tracks()
-        fun set(k: Hsv) { sphere = k.color(); ball.color = sphere; fillTrio(); tracks() }
         // the hue kept apart: a grey has none, and turning the saturation back up must find it again
-        var hh = h.h
+        var hh = Hsv.of(tones[tone]).h
+        fun tracks() {
+            val k = Hsv.of(tones[tone])
+            hue.value = hh / 360
+            sat.colors = intArrayOf(Hsv(hh, 0f, k.v).color(), Hsv(hh, 1f, k.v).color()); sat.value = k.s
+            vel.colors = intArrayOf(Color.BLACK, Hsv(hh, k.s, 1f).color()); vel.value = k.v
+        }
+        fun fillTrio() {
+            trio.removeAllViews()
+            listOf(R.drawable.ic_moon to "Ombre", R.drawable.ic_drop to "Ton moyen", R.drawable.ic_sun to "Lumière").forEachIndexed { i, (icon, n) ->
+                val on = i == tone
+                trio.addView(hbox(
+                    ImageView(this).apply { setImageResource(icon); setColorFilter(if (on) TEXT else MU); contentDescription = n }.lp(dp(18), dp(18)),
+                    View(this).apply { background = rounded(tones[i], 14, if (on) 3 else 1, if (on) TEXT else 0x44ffffff) }.lp(dp(if (on) 30 else 24), dp(if (on) 30 else 24), l = 8),
+                ).apply {
+                    gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(8)); background = ripple(14)
+                    setOnClickListener { tone = i; hh = Hsv.of(tones[i]).h; fillTrio(); tracks() }
+                    setOnLongClickListener { gather(list, tones[i], slotsRow, changed); bar(); true }
+                }.lp(0, -2, 1f))
+            }
+        }
+        fun set(k: Hsv) { tones[tone] = k.color(); ball.tones = tones.toList(); fillTrio(); tracks(); bar() }
         hue.onChange = { hh = it * 360; set(Hsv(hh, sat.value, vel.value)) }
         sat.onChange = { set(Hsv(hh, it, vel.value)) }
         vel.onChange = { set(Hsv(hh, sat.value, it)) }
+        fillTrio(); tracks()
 
         body.addView(hbox(
-            iconButton(R.drawable.ic_delete, "Retirer la couleur") { unslot(list, slotsRow, changed) },
-            View(this).lp(0, 1, 1f),
-            iconButton(R.drawable.ic_pipette, "Saisir une couleur") { hexDialog(sphere) { c -> hh = Hsv.of(c).h; hue.value = hh / 360; set(Hsv.of(c)) } },
-        ).apply { setPadding(dp(12), 0, dp(12), 0) })
+            iconButton(R.drawable.ic_delete, "Retirer la couleur") { unslot(list, slotsRow, changed); bar() },
+            hbox(before.lp(0, -1, 1f), now.lp(0, -1, 1f)).apply { background = rounded(SURF2, 8); clipToOutline = true }.lp(0, dp(28), 1f, l = 8, r = 8),
+            iconButton(R.drawable.ic_pipette, "Saisir le ton moyen") {
+                // a typed color becomes the midtone, its shadow and light worked out from it
+                hexDialog(tones[1]) { c -> shading(c).forEachIndexed { i, t -> tones[i] = t }; ball.tones = tones.toList(); hh = Hsv.of(tones[tone]).h; fillTrio(); tracks(); bar() }
+            },
+        ).apply { setPadding(dp(12), 0, dp(12), dp(8)) })
         body.addView(ball.lp(dp(260), -2).apply { (layoutParams as LinearLayout.LayoutParams).gravity = Gravity.CENTER_HORIZONTAL })
-        body.addView(trio.lp(-1, -2, t = 14))
-        body.addView(vbox(hue, sat, vel).apply { background = rounded(SURF, 14); setPadding(dp(6), dp(6), dp(6), dp(6)) }.lp(-1, -2, l = 16, t = 14, r = 16))
+        body.addView(hbox(
+            tv("Auto", 13f, MU, bold = true).apply {
+                setPadding(dp(14), dp(8), dp(14), dp(8)); background = rounded(SURF, 16); contentDescription = "Ombre et lumière depuis le ton moyen"
+                setOnClickListener { shading(tones[1]).forEachIndexed { i, t -> tones[i] = t }; ball.tones = tones.toList(); hh = Hsv.of(tones[tone]).h; fillTrio(); tracks(); bar() }
+            },
+            View(this).lp(0, 1, 1f),
+            hbox(ImageView(this).apply { setImageResource(R.drawable.ic_plus) }.lp(dp(18), dp(18)), tv("Ajouter", 14f, bold = true).lp(l = 6)).apply {
+                setPadding(dp(14), dp(8), dp(16), dp(8)); background = rounded(SURF2, 16); foreground = ripple(16)
+                setOnClickListener { gather(list, ball.picked, slotsRow, changed); bar() }
+            },
+        ).lp(-1, -2, l = 16, t = 8, r = 16))
+        body.addView(trio.lp(-1, -2, l = 8, t = 6, r = 8))
+        body.addView(vbox(hue, sat, vel).apply { background = rounded(SURF, 14); setPadding(dp(6), dp(6), dp(6), dp(6)) }.lp(-1, -2, l = 16, t = 6, r = 16))
         body.addView(slotsRow.lp(-1, -2, l = 12, t = 14, r = 12))
-        body.addView(tv("Touche la sphère pour garder une nuance", 12f, MU).apply { gravity = Gravity.CENTER }.lp(-1, -2, t = 8))
+        body.addView(tv("Touche un ton pour le régler, appui long pour l'ajouter.\nTouche la sphère pour choisir une nuance.", 12f, MU).apply { gravity = Gravity.CENTER }.lp(-1, -2, t = 8))
     }
 
     // ---- "Modifier les couleurs": the palette tried on patterns ----
@@ -485,8 +541,9 @@ class MainActivity : Activity() {
                         if (page == Pattern.FLAT.ordinal) cs.shuffle()
                         sync()
                     }),
-                swatches.lp(-1, -2, t = 4, b = 14),
-                frame.lp(-1, 0, 1f, l = 16, r = 16),
+                // many colors scroll sideways
+                HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; isFillViewport = true; addView(swatches.apply { setPadding(dp(11), 0, dp(11), 0) }) }.lp(-1, -2, t = 4, b = 14),
+                frame.apply { background = rounded(SURF, 4); clipToOutline = true }.lp(-1, 0, 1f, l = 16, r = 16),
                 bar.lp(-1, dp(22), l = 16, t = 12, r = 16),
                 dots.lp(-1, -2, t = 12),
                 hbox(reset.lp(0, -2, 1f, r = 6), keep.lp(0, -2, 1f, l = 6)).apply { setPadding(dp(16), dp(12), dp(16), dp(12)) },

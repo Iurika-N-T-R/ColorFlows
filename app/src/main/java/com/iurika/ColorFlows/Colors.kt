@@ -47,13 +47,19 @@ enum class Harmony(val label: String, val turns: List<Float>) {
     RECT("Rectangle", listOf(0f, 60f, 180f, 240f)),
     COMPOUND("Composée", listOf(0f, 30f, 180f, 210f));
 
-    /** The colors in wheel space (hue = the wheel's own angle), base first. */
-    fun points(base: Hsv): List<Hsv> = if (this == MONO) listOf(
-        base,
-        Hsv(base.h, base.s * .45f, min(1f, base.v * 1.1f + .1f)),
-        Hsv(base.h, min(1f, base.s * 1.15f + .1f), base.v * .55f),
-    ) else turns.map { base.copy(h = base.h + it) }
+    /**
+     * The colors in wheel space (hue = the wheel's own angle), base first.
+     * Monochrome: one hue, each color its own saturation and value, [mono] holding the two besides the base.
+     */
+    fun points(base: Hsv, mono: List<Hsv> = monoOf(base)): List<Hsv> =
+        if (this == MONO) listOf(base) + mono.map { it.copy(h = base.h) } else turns.map { base.copy(h = base.h + it) }
 }
+
+/** The monochrome's two other colors to start from: a lighter, softer one and a deeper, darker one. */
+fun monoOf(base: Hsv) = listOf(
+    Hsv(base.h, base.s * .45f, min(1f, base.v * 1.1f + .1f)),
+    Hsv(base.h, min(1f, base.s * 1.15f + .1f), base.v * .55f),
+)
 
 enum class Wheel { RGB, RYB }
 

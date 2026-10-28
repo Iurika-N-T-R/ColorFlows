@@ -58,12 +58,12 @@ class HarmonyIcon(c: Context, val harmony: Harmony) : View(c) {
 }
 
 /**
- * A lit ball of one color, as painters study it: the cooler shadow below, the warmer light above.
- * Touching it picks the shade under the finger.
+ * A lit ball painted with three colors, as painters study one: [tones] = shadow, midtone, light.
+ * Touching it picks the shade under the finger, shown in a disc there.
  */
 class SphereView(c: Context) : View(c) {
-    var color = 0xffd2643c.toInt(); set(v) { field = v; bmp = null; picked = v; invalidate() }
-    var picked = color; private set
+    var tones = shading(0xffd2643c.toInt()); set(v) { field = v; bmp = null; picked = v[1]; px = -1f; invalidate() }
+    var picked = tones[1]; private set
     var onPick: (Int) -> Unit = {}
     private var bmp: Bitmap? = null
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -73,7 +73,7 @@ class SphereView(c: Context) : View(c) {
     override fun onMeasure(w: Int, h: Int) { val s = MeasureSpec.getSize(w); setMeasuredDimension(s, s) }
 
     private fun render(n: Int): Bitmap {
-        val (shadow, mid, light) = shading(color)
+        val (shadow, mid, light) = tones
         val out = IntArray(n * n)
         val r = n / 2f
         // light from the top left, a little in front
@@ -85,8 +85,10 @@ class SphereView(c: Context) : View(c) {
             if (q > 1) continue
             val nz = sqrt(1 - q)
             val lam = ((nx * lx + ny * ly + nz * lz) / ll).coerceIn(-1f, 1f)
+            // the midtone where the ball faces us, the light only on the side turned to the lamp
+            val k = .35f
+            var c = if (lam < k) mix(shadow, mid, ((lam + 1) / (k + 1)).pow(1.4f)) else mix(mid, light, ((lam - k) / (1 - k)).pow(1.3f))
             val t = (lam + 1) / 2 // 0 = turned away, 1 = facing the light
-            var c = if (t < .5f) mix(shadow, mid, (t / .5f).pow(.8f)) else mix(mid, light, ((t - .5f) / .5f).pow(1.6f))
             // light bouncing back on the rim of the shadow side
             val rim = (1 - nz).pow(3) * (1 - t)
             c = mix(c, mid, rim * .35f)
@@ -121,7 +123,7 @@ class SphereView(c: Context) : View(c) {
         val c = b.getPixel((px / width * b.width).toInt().coerceIn(0, b.width - 1), (py / height * b.height).toInt().coerceIn(0, b.height - 1))
         picked = c or 0xff000000.toInt()
         parent.requestDisallowInterceptTouchEvent(true)
-        if (e.actionMasked == MotionEvent.ACTION_UP) onPick(picked)
+        onPick(picked)
         invalidate()
         return true
     }
