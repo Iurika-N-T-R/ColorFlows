@@ -1,4 +1,4 @@
-package com.iurika.colorflows
+package com.iurika.ColorFlows
 
 import org.junit.Assert.assertEquals
 import org.junit.Test

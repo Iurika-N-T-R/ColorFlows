@@ -10,10 +10,10 @@ plugins {
 val keystore = rootProject.file("keystore.properties").takeIf { it.exists() }?.let { f -> Properties().apply { f.inputStream().use(::load) } }
 
 android {
-    namespace = "com.iurika.colorflows"
+    namespace = "com.iurika.ColorFlows"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.iurika.colorflows"
+        applicationId = "com.iurika.ColorFlows"
         // 26: adaptive launcher icon
         minSdk = 26
         targetSdk = 35

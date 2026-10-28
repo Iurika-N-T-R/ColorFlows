@@ -1,4 +1,4 @@
-package com.iurika.colorflows
+package com.iurika.ColorFlows
 
 import android.app.Activity
 import android.content.res.ColorStateList

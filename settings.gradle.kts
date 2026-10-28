@@ -4,5 +4,5 @@ pluginManagement {
 dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
-rootProject.name = "colorflows"
+rootProject.name = "ColorFlows"
 include(":app")

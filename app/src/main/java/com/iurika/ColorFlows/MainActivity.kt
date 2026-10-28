@@ -1,4 +1,4 @@
-package com.iurika.colorflows
+package com.iurika.ColorFlows
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -171,7 +171,7 @@ class MainActivity : Activity() {
         ).apply { setPadding(dp(12), dp(8), dp(14), dp(8)); background = ripple(18); setOnClickListener { open { palettes() } } }
 
         return vbox(
-            topBar("colorFlows", null, palettes, more),
+            topBar("ColorFlows", null, palettes, more),
             ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(body) }.lp(-1, 0, 1f),
             hbox(edit.lp(0, -2, 1f, r = 6), keep.lp(0, -2, 1f, l = 6)).apply { setPadding(dp(16), dp(8), dp(16), dp(12)) },
         )
@@ -190,8 +190,8 @@ class MainActivity : Activity() {
                     refresh()
                 }
                 else -> AlertDialog.Builder(this@MainActivity, android.R.style.Theme_Material_Dialog_Alert)
-                    .setTitle("colorFlows ${packageManager.getPackageInfo(packageName, 0).versionName}")
-                    .setMessage("Harmonies de couleurs, palettes d'images et ombrages.\nLibre et open source (MIT).\ngithub.com/Iurika-N-T-R/colorFlows")
+                    .setTitle("ColorFlows ${packageManager.getPackageInfo(packageName, 0).versionName}")
+                    .setMessage("Harmonies de couleurs, palettes d'images et ombrages.\nLibre et open source (MIT).\ngithub.com/Iurika-N-T-R/ColorFlows")
                     .setPositiveButton("OK", null).show()
             }
             true

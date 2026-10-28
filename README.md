@@ -1,4 +1,4 @@
-# colorFlows
+# ColorFlows
 
 Color harmonies, palettes from pictures, and painter's shading, in a small Android app with no dependencies.
 
@@ -9,7 +9,7 @@ Color harmonies, palettes from pictures, and painter's shading, in a small Andro
 - **Palettes**: saved on the phone. You can rename, copy the HEX values, share or delete them.
 - Type any color in HEX or RGB.
 
-Share an image to colorFlows to open it in the IMAGE tab.
+Share an image to ColorFlows to open it in the IMAGE tab.
 
 ## Build
 
